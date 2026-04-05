@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { STATE_RULES } = require('./seed/state_rules_data');
 
-const DATA_DIR = path.join(__dirname, 'data');
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_PATH = path.join(DATA_DIR, 'blue_sky.db');
 
 if (!fs.existsSync(DATA_DIR)) {

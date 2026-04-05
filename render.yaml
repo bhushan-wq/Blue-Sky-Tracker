@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: blue-sky-tracker
+    env: node
+    buildCommand: "npm run install:all && npm run build --prefix frontend"
+    startCommand: "npm start --prefix backend"
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /var/lib/data
+    disk:
+      name: sqlite-data
+      mountPath: /var/lib/data
+      sizeGB: 1
