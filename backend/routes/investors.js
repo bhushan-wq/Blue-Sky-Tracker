@@ -11,23 +11,29 @@ function computeDueDate(firstSaleDate, deadlineDays) {
 }
 
 // Helper: auto-create filing obligation when investor is committed or closed
-function checkAndCreateFiling(fundId, stateCode, fundExemptionType, firstSaleDate) {
+async function checkAndCreateFiling(fundId, stateCode, fundExemptionType, firstSaleDate) {
   // Look up the state rule
-  const rule = db.prepare(`
-    SELECT * FROM state_rules
-    WHERE state_code = ?
-      AND (exemption_type = 'both' OR exemption_type = ?)
-    LIMIT 1
-  `).get(stateCode, fundExemptionType);
+  const ruleData = await db.execute({
+    sql: `
+      SELECT * FROM state_rules
+      WHERE state_code = ?
+        AND (exemption_type = 'both' OR exemption_type = ?)
+      LIMIT 1
+    `,
+    args: [stateCode, fundExemptionType]
+  });
 
-  if (!rule || !rule.filing_required) return null;
+  if (ruleData.rows.length === 0) return null;
+  const rule = ruleData.rows[0];
+  if (!rule.filing_required) return null;
 
   // Check if a notice filing already exists
-  const existing = db.prepare(`
-    SELECT id FROM filings WHERE fund_id = ? AND state_code = ? AND filing_type = 'notice'
-  `).get(fundId, stateCode);
+  const existingData = await db.execute({
+    sql: `SELECT id FROM filings WHERE fund_id = ? AND state_code = ? AND filing_type = 'notice'`,
+    args: [fundId, stateCode]
+  });
 
-  if (existing) return existing;
+  if (existingData.rows.length > 0) return existingData.rows[0];
 
   // Create new filing
   const dueDate = computeDueDate(firstSaleDate, rule.deadline_days);
@@ -37,23 +43,29 @@ function checkAndCreateFiling(fundId, stateCode, fundExemptionType, firstSaleDat
     status = 'overdue';
   }
 
-  const result = db.prepare(`
-    INSERT INTO filings (fund_id, state_code, filing_type, status, due_date)
-    VALUES (?, ?, 'notice', ?, ?)
-  `).run(fundId, stateCode, status, dueDate);
+  const result = await db.execute({
+    sql: `
+      INSERT INTO filings (fund_id, state_code, filing_type, status, due_date)
+      VALUES (?, ?, 'notice', ?, ?)
+      RETURNING *;
+    `,
+    args: [fundId, stateCode, status, dueDate]
+  });
 
-  return db.prepare('SELECT * FROM filings WHERE id = ?').get(result.lastInsertRowid);
+  return result.rows[0];
 }
 
 // GET /api/investors?fund_id=X — list investors for a fund, grouped by state
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const { fund_id } = req.query;
     if (!fund_id) return res.status(400).json({ error: 'fund_id query param is required' });
 
-    const investors = db.prepare(`
-      SELECT * FROM investors WHERE fund_id = ? ORDER BY state ASC, name ASC
-    `).all(fund_id);
+    const investorsData = await db.execute({
+      sql: 'SELECT * FROM investors WHERE fund_id = ? ORDER BY state ASC, name ASC',
+      args: [fund_id]
+    });
+    const investors = investorsData.rows;
 
     // Group by state
     const grouped = {};
@@ -70,7 +82,7 @@ router.get('/', (req, res) => {
 });
 
 // POST /api/investors — create investor + auto-trigger filing check
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const {
       fund_id, name, entity_name, state, pipeline_stage,
@@ -81,31 +93,36 @@ router.post('/', (req, res) => {
       return res.status(400).json({ error: 'fund_id, name, state, pipeline_stage are required' });
     }
 
-    const fund = db.prepare('SELECT * FROM funds WHERE id = ?').get(fund_id);
-    if (!fund) return res.status(404).json({ error: 'Fund not found' });
+    const fundData = await db.execute({ sql: 'SELECT * FROM funds WHERE id = ?', args: [fund_id] });
+    if (fundData.rows.length === 0) return res.status(404).json({ error: 'Fund not found' });
+    const fund = fundData.rows[0];
 
-    const result = db.prepare(`
-      INSERT INTO investors (fund_id, name, entity_name, state, pipeline_stage,
-        commitment_amount, is_accredited, is_qualified_client, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      fund_id,
-      name,
-      entity_name || null,
-      state.toUpperCase(),
-      pipeline_stage,
-      commitment_amount || null,
-      is_accredited !== undefined ? (is_accredited ? 1 : 0) : 1,
-      is_qualified_client !== undefined ? (is_qualified_client ? 1 : 0) : 0,
-      notes || null
-    );
+    const result = await db.execute({
+      sql: `
+        INSERT INTO investors (fund_id, name, entity_name, state, pipeline_stage,
+          commitment_amount, is_accredited, is_qualified_client, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        RETURNING *;
+      `,
+      args: [
+        fund_id,
+        name,
+        entity_name || null,
+        state.toUpperCase(),
+        pipeline_stage,
+        commitment_amount || null,
+        is_accredited !== undefined ? (is_accredited ? 1 : 0) : 1,
+        is_qualified_client !== undefined ? (is_qualified_client ? 1 : 0) : 0,
+        notes || null
+      ]
+    });
 
-    const investor = db.prepare('SELECT * FROM investors WHERE id = ?').get(result.lastInsertRowid);
+    const investor = result.rows[0];
 
     // Auto-filing logic: trigger if stage is committed or closed
     let filing = null;
     if (pipeline_stage === 'committed' || pipeline_stage === 'closed') {
-      filing = checkAndCreateFiling(fund_id, state.toUpperCase(), fund.exemption_type, fund.first_sale_date);
+      filing = await checkAndCreateFiling(fund_id, state.toUpperCase(), fund.exemption_type, fund.first_sale_date);
     }
 
     res.status(201).json({ investor, filing });
@@ -116,12 +133,14 @@ router.post('/', (req, res) => {
 });
 
 // PUT /api/investors/:id — update investor + re-check filing obligations
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
-    const investor = db.prepare('SELECT * FROM investors WHERE id = ?').get(req.params.id);
-    if (!investor) return res.status(404).json({ error: 'Investor not found' });
+    const investorData = await db.execute({ sql: 'SELECT * FROM investors WHERE id = ?', args: [req.params.id] });
+    if (investorData.rows.length === 0) return res.status(404).json({ error: 'Investor not found' });
+    const investor = investorData.rows[0];
 
-    const fund = db.prepare('SELECT * FROM funds WHERE id = ?').get(investor.fund_id);
+    const fundData = await db.execute({ sql: 'SELECT * FROM funds WHERE id = ?', args: [investor.fund_id] });
+    const fund = fundData.rows[0];
 
     const {
       name, entity_name, state, pipeline_stage,
@@ -131,31 +150,35 @@ router.put('/:id', (req, res) => {
     const newState = state ? state.toUpperCase() : investor.state;
     const newStage = pipeline_stage ?? investor.pipeline_stage;
 
-    db.prepare(`
-      UPDATE investors SET
-        name = ?,
-        entity_name = ?,
-        state = ?,
-        pipeline_stage = ?,
-        commitment_amount = ?,
-        is_accredited = ?,
-        is_qualified_client = ?,
-        notes = ?,
-        updated_at = datetime('now')
-      WHERE id = ?
-    `).run(
-      name ?? investor.name,
-      entity_name !== undefined ? entity_name : investor.entity_name,
-      newState,
-      newStage,
-      commitment_amount !== undefined ? commitment_amount : investor.commitment_amount,
-      is_accredited !== undefined ? (is_accredited ? 1 : 0) : investor.is_accredited,
-      is_qualified_client !== undefined ? (is_qualified_client ? 1 : 0) : investor.is_qualified_client,
-      notes !== undefined ? notes : investor.notes,
-      req.params.id
-    );
+    await db.execute({
+      sql: `
+        UPDATE investors SET
+          name = ?,
+          entity_name = ?,
+          state = ?,
+          pipeline_stage = ?,
+          commitment_amount = ?,
+          is_accredited = ?,
+          is_qualified_client = ?,
+          notes = ?,
+          updated_at = datetime('now')
+        WHERE id = ?
+      `,
+      args: [
+        name ?? investor.name,
+        entity_name !== undefined ? entity_name : investor.entity_name,
+        newState,
+        newStage,
+        commitment_amount !== undefined ? commitment_amount : investor.commitment_amount,
+        is_accredited !== undefined ? (is_accredited ? 1 : 0) : investor.is_accredited,
+        is_qualified_client !== undefined ? (is_qualified_client ? 1 : 0) : investor.is_qualified_client,
+        notes !== undefined ? notes : investor.notes,
+        req.params.id
+      ]
+    });
 
-    const updated = db.prepare('SELECT * FROM investors WHERE id = ?').get(req.params.id);
+    const updatedData = await db.execute({ sql: 'SELECT * FROM investors WHERE id = ?', args: [req.params.id] });
+    const updated = updatedData.rows[0];
 
     // Re-check filing obligations if state or stage changed to committed/closed
     let filing = null;
@@ -164,13 +187,12 @@ router.put('/:id', (req, res) => {
 
     if (newStage === 'committed' || newStage === 'closed') {
       if (stageChanged || stateChanged) {
-        filing = checkAndCreateFiling(investor.fund_id, newState, fund.exemption_type, fund.first_sale_date);
+        filing = await checkAndCreateFiling(investor.fund_id, newState, fund.exemption_type, fund.first_sale_date);
       }
     }
 
-    // If state changed to a committed/closed investor, also check new state
     if (stateChanged && (newStage === 'committed' || newStage === 'closed')) {
-      filing = checkAndCreateFiling(investor.fund_id, newState, fund.exemption_type, fund.first_sale_date);
+      filing = await checkAndCreateFiling(investor.fund_id, newState, fund.exemption_type, fund.first_sale_date);
     }
 
     res.json({ investor: updated, filing });
@@ -181,12 +203,12 @@ router.put('/:id', (req, res) => {
 });
 
 // DELETE /api/investors/:id — delete investor
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
-    const investor = db.prepare('SELECT * FROM investors WHERE id = ?').get(req.params.id);
-    if (!investor) return res.status(404).json({ error: 'Investor not found' });
+    const investorData = await db.execute({ sql: 'SELECT * FROM investors WHERE id = ?', args: [req.params.id] });
+    if (investorData.rows.length === 0) return res.status(404).json({ error: 'Investor not found' });
 
-    db.prepare('DELETE FROM investors WHERE id = ?').run(req.params.id);
+    await db.execute({ sql: 'DELETE FROM investors WHERE id = ?', args: [req.params.id] });
     res.json({ success: true });
   } catch (err) {
     console.error(err);
