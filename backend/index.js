@@ -28,25 +28,20 @@ app.get('/api/health', (req, res) => {
 });
 
 // Mount routes
-app.use('/api/funds', fundsRouter);
-app.use('/api/investors', investorsRouter);
-app.use('/api/filings', filingsRouter);
-app.use('/api/state-rules', stateRulesRouter);
+const apiRouter = express.Router();
+apiRouter.use('/funds', fundsRouter);
+apiRouter.use('/investors', investorsRouter);
+apiRouter.use('/filings', filingsRouter);
+apiRouter.use('/state-rules', stateRulesRouter);
 
-// Serve frontend in production
-if (process.env.NODE_ENV === 'production') {
-  const path = require('path');
-  app.use(express.static(path.join(__dirname, '../frontend/dist')));
-  
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../frontend/dist/index.html'));
-  });
-} else {
-  // 404 handler for dev API
-  app.use((req, res) => {
-    res.status(404).json({ error: `Route ${req.method} ${req.path} not found` });
-  });
-}
+// Local dev usually sends /api/..., Vercel's routePrefix might send /...
+app.use('/api', apiRouter);
+app.use('/', apiRouter);
+
+// 404 handler for API
+app.use((req, res) => {
+  res.status(404).json({ error: `Route ${req.method} ${req.path} not found` });
+});
 
 // Error handler
 app.use((err, req, res, next) => {
