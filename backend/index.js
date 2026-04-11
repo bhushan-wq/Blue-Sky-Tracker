@@ -2,11 +2,20 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 
+require('dotenv').config();
 const fundsRouter = require('./routes/funds');
 const investorsRouter = require('./routes/investors');
 const filingsRouter = require('./routes/filings');
 const stateRulesRouter = require('./routes/state_rules');
 const authRouter = require('./routes/auth');
+
+console.log('Routes loaded:', {
+  funds: typeof fundsRouter,
+  investors: typeof investorsRouter,
+  filings: typeof filingsRouter,
+  rules: typeof stateRulesRouter,
+  auth: typeof authRouter
+});
 const session = require('express-session');
 const passport = require('passport');
 const cookieParser = require('cookie-parser');
@@ -16,6 +25,7 @@ const cookieParser = require('cookie-parser');
 require('./db');
 
 const app = express();
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3001;
 
 app.use(cors({

@@ -6,12 +6,14 @@ const db = require('../db');
 const router = express.Router();
 
 // Passport configuration
-passport.use(new GoogleStrategy({
-    clientID: process.env.GOOGLE_CLIENT_ID,
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL: "/api/auth/google/callback",
-    proxy: true
-  },
+if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+  console.log('Initializing Google Strategy...');
+  passport.use(new GoogleStrategy({
+      clientID: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      callbackURL: "/api/auth/google/callback",
+      proxy: true
+    },
   async (accessToken, refreshToken, profile, done) => {
     try {
       // Check if user exists
@@ -47,6 +49,9 @@ passport.use(new GoogleStrategy({
     }
   }
 ));
+} else {
+  console.warn('Google OAuth credentials missing. Google login will be disabled.');
+}
 
 passport.serializeUser((user, done) => {
   done(null, user.id);
