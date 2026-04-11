@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 
@@ -5,6 +6,11 @@ const fundsRouter = require('./routes/funds');
 const investorsRouter = require('./routes/investors');
 const filingsRouter = require('./routes/filings');
 const stateRulesRouter = require('./routes/state_rules');
+const authRouter = require('./routes/auth');
+const session = require('express-session');
+const passport = require('passport');
+const cookieParser = require('cookie-parser');
+
 
 // Initialize DB (runs schema + seed)
 require('./db');
@@ -18,9 +24,24 @@ app.use(cors({
     : ['http://localhost:5173', 'http://127.0.0.1:5173'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
 }));
 
+app.use(cookieParser());
 app.use(express.json());
+
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'blue-sky-secret',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
+}));
+
+app.use(passport.initialize());
+app.use(passport.session());
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -33,6 +54,7 @@ apiRouter.use('/funds', fundsRouter);
 apiRouter.use('/investors', investorsRouter);
 apiRouter.use('/filings', filingsRouter);
 apiRouter.use('/state-rules', stateRulesRouter);
+apiRouter.use('/auth', authRouter);
 
 // Local dev usually sends /api/..., Vercel's routePrefix might send /...
 app.use('/api', apiRouter);

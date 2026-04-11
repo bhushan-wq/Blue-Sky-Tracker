@@ -101,6 +101,16 @@ async function initDb() {
         updated_at TEXT DEFAULT (datetime('now')),
         UNIQUE(fund_id, state_code, filing_type, filing_year)
       );
+
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        google_id TEXT UNIQUE NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        display_name TEXT,
+        avatar_url TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+
     `);
 
     // Seed state_rules

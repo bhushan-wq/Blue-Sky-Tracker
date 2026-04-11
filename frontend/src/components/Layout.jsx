@@ -1,4 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
+import { LogOut, User } from 'lucide-react'
 
 const navItems = [
   {
@@ -44,6 +46,8 @@ const navItems = [
 ]
 
 export default function Layout() {
+  const { user, logout } = useAuth();
+
   return (
     <div className="flex h-screen bg-gray-50">
       {/* Sidebar */}
@@ -84,10 +88,28 @@ export default function Layout() {
           ))}
         </nav>
 
-        {/* Footer */}
-        <div className="px-6 py-4 border-t border-slate-700">
-          <p className="text-slate-500 text-xs">506(b) / 506(c) Notice Filings</p>
-          <p className="text-slate-600 text-xs mt-1">Always verify with counsel</p>
+        {/* User Profile & Logout */}
+        <div className="px-4 py-4 border-t border-slate-700">
+          <div className="flex items-center gap-3 px-2 py-2 mb-2">
+            {user?.avatar_url ? (
+              <img src={user.avatar_url} alt={user.display_name} className="w-8 h-8 rounded-full border border-slate-600" />
+            ) : (
+              <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center border border-slate-600">
+                <User className="w-4 h-4 text-slate-400" />
+              </div>
+            )}
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-white truncate">{user?.display_name || 'User'}</p>
+              <p className="text-xs text-slate-500 truncate">{user?.email}</p>
+            </div>
+          </div>
+          <button
+            onClick={logout}
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-slate-400 hover:bg-red-500/10 hover:text-red-400 transition-colors"
+          >
+            <LogOut className="w-4 h-4" />
+            Sign Out
+          </button>
         </div>
       </aside>
 
